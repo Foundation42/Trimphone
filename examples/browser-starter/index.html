@@ -26,11 +26,29 @@
       button {
         cursor: pointer;
       }
+      #calls {
+        list-style: none;
+        padding-left: 0;
+        margin: 0;
+      }
+      #calls li {
+        padding: 0.25rem 0;
+        border-bottom: 1px solid #333;
+      }
+      #calls li:last-child {
+        border-bottom: none;
+      }
     </style>
   </head>
   <body>
     <h1>Trimphone Browser Starter</h1>
     <p id="status">Connecting…</p>
+    <fieldset>
+      <legend>Active Calls</legend>
+      <ul id="calls">
+        <li>No active calls</li>
+      </ul>
+    </fieldset>
     <fieldset>
       <legend>Dial An Address</legend>
       <form id="dial-form">

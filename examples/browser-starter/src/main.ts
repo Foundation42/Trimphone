@@ -3,42 +3,42 @@ import {
   Trimphone,
   browserProcesses,
 } from "trimphone";
+import { CallRegistry } from "./callList";
+import { log, setStatus, renderCalls } from "./ui";
 
 const defaultUrl = "wss://engram-fi-1.entrained.ai:2096";
 const SYSTEMX_URL = (import.meta as any).env?.VITE_SYSTEMX_URL ?? defaultUrl;
 
-const statusEl = document.querySelector<HTMLParagraphElement>("#status");
-const outputEl = document.querySelector<HTMLPreElement>("#output");
 const dialForm = document.querySelector<HTMLFormElement>("#dial-form");
 const sendForm = document.querySelector<HTMLFormElement>("#send-form");
 const sendInput = sendForm?.querySelector<HTMLInputElement>("input[name=message]");
-
-function log(message: string) {
-  if (!outputEl) return;
-  outputEl.textContent += `${message}\n`;
-  outputEl.scrollTop = outputEl.scrollHeight;
-}
 
 async function bootstrap() {
   const phone = new Trimphone(SYSTEMX_URL, {
     transportFactory: () => new BrowserWebSocketTransport(),
   });
 
+  const calls = new CallRegistry();
+  calls.subscribe(renderCalls);
+
   const address = `web-client-${crypto.randomUUID().slice(0, 8)}@trimphone.io`;
   await phone.register(address);
-  statusEl!.textContent = `Registered as ${address}`;
+  setStatus(`Registered as ${address}`);
 
   phone.on("error", (err) => {
     log(`Error: ${(err as Error).message}`);
   });
 
-  const activeCalls = new Map<string, ReturnType<typeof setupCall>>();
-
   phone.on("ring", (call) => {
     call.answer();
-    const handle = setupCall(call, activeCalls);
+    calls.upsert({
+      id: call.id,
+      from: call.from,
+      status: "incoming",
+    });
+    calls.update(call.id, { status: "active" });
     void call.tunnel(new browserProcesses.components.EchoProcess());
-    activeCalls.set(call.id, handle);
+    setupCall(call, calls);
   });
 
   dialForm?.addEventListener("submit", async (event) => {
@@ -46,14 +46,18 @@ async function bootstrap() {
     const formData = new FormData(dialForm);
     const to = formData.get("to")?.toString().trim();
     if (!to) return;
+    const placeholderId = crypto.randomUUID();
+    calls.upsert({ id: placeholderId, to, status: "dialling" });
     try {
       const call = await phone.dial(to);
-      const handle = setupCall(call, activeCalls);
-      activeCalls.set(call.id, handle);
+      calls.remove(placeholderId);
+      calls.upsert({ id: call.id, to, status: "active" });
+      setupCall(call, calls);
       log(`Dialled ${to}`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      log(`Dial failed: ${message}`);
+      const reason = error instanceof Error ? error.message : String(error);
+      calls.update(placeholderId, { status: "failed", reason });
+      log(`Dial failed: ${reason}`);
     }
   });
 
@@ -63,14 +67,18 @@ async function bootstrap() {
     if (!text.trim()) {
       return;
     }
-    for (const handle of activeCalls.values()) {
-      handle.send(text);
+    for (const call of calls.snapshot().filter((c) => c.status === "active")) {
+      const payload = text.endsWith("\n") ? text : `${text}\n`;
+      const writer = activeCallWriters.get(call.id);
+      writer?.write(payload);
     }
     sendInput!.value = "";
   });
 }
 
-function setupCall(call: import("trimphone").Call, active: Map<string, ReturnType<typeof setupCall>>) {
+const activeCallWriters = new Map<string, { write: (payload: string) => void }>();
+
+function setupCall(call: import("trimphone").Call, registry: CallRegistry) {
   const stream = call.getWebStream();
   const reader = stream.readable.getReader();
   const writer = stream.writable.getWriter();
@@ -93,8 +101,9 @@ function setupCall(call: import("trimphone").Call, active: Map<string, ReturnTyp
     closed = true;
     reader.cancel().catch(() => {});
     writer.close().catch(() => {});
+    registry.update(call.id, { status: "ended" });
+    activeCallWriters.delete(call.id);
     log(`Call ${call.id.slice(0, 6)} ended`);
-    active.delete(call.id);
   });
 
   call.on("message", (msg) => {
@@ -103,21 +112,20 @@ function setupCall(call: import("trimphone").Call, active: Map<string, ReturnTyp
     }
   });
 
-  return {
-    send: (text: string) => {
+  activeCallWriters.set(call.id, {
+    write: (text: string) => {
       if (closed) {
         log(`Call ${call.id.slice(0, 6)} already closed`);
         return;
       }
-      const payload = text.endsWith("\n") ? text : `${text}\n`;
-      writer.write(textEncoder.encode(payload)).catch((error) => {
+      writer.write(textEncoder.encode(text)).catch((error) => {
         log(`Write failed: ${(error as Error).message}`);
       });
     },
-  };
+  });
 }
 
 bootstrap().catch((error) => {
   console.error(error);
-  statusEl!.textContent = `Failed: ${(error as Error).message}`;
+  setStatus(`Failed: ${(error as Error).message}`);
 });
