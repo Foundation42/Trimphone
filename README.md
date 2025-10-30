@@ -81,15 +81,24 @@ const phone = new Trimphone(["wss://primary", "wss://backup"], {
 
 - Install dependencies with `bun install`
 - Run unit tests with `bun test`
+- Run live SystemX tests with `bun run src/cli.ts test --live` (set `SYSTEMX_URL` if different)
 - Build distributable output with `bun run build`
 
-The repository includes Bun-based tests that exercise the core Trimphone behaviours and the tunnelling stream implementation. Mock transports in the tests demonstrate how to integrate alternate transport backends.
+The repository includes Bun-based tests that exercise the core Trimphone behaviours, heartbeat/reconnect logic, and the tunnelling stream implementation. Mock transports in the tests demonstrate how to integrate alternate transport backends.
+
+Trimphone also ships with a CLI entrypoint. After building (or via Bun during development) you can run:
+
+```bash
+trimphone test --live --url wss://engram-fi-1.entrained.ai:2096
+```
+
+This executes the same echo, stream, and stdio end-to-end tests against a live SystemX deployment.
 
 ## Next Steps
 
-- Auto-reconnect with backoff and state restoration
 - Presence and status APIs
 - Richer dial metadata and call progress events
-- Additional examples (echo server, stdio bridge)
+- Additional examples (HTTP proxy, advanced tunnelling)
+- Optional CI wiring for automated live test runs
 
 Contributions are welcome! See the `docs/Trimphone.md` brief for the full roadmap.
