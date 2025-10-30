@@ -8,3 +8,4 @@ export * from "./integration/runLiveTests";
 export * from "./process";
 export { BrowserWebSocketTransport } from "./web/websocketTransport";
 export { BrowserTunnelStream } from "./web/tunnelStream";
+export { browserProcesses } from "./process/browser";

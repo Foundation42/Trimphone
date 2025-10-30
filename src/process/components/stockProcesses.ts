@@ -1,5 +1,8 @@
 import { TextTransformProcess } from "./textTransform";
 
+const textEncoder = new TextEncoder();
+const textDecoder = new TextDecoder();
+
 export class EchoProcess extends TextTransformProcess {
   constructor() {
     super((input) => input);
