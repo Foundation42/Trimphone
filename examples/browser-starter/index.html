@@ -38,6 +38,10 @@
       #calls li:last-child {
         border-bottom: none;
       }
+      #call-local {
+        display: none;
+        margin-left: 0.5rem;
+      }
     </style>
   </head>
   <body>
@@ -54,9 +58,10 @@
       <form id="dial-form">
         <label>
           To:
-          <input type="text" name="to" value="echo@services.io" required />
+          <input type="text" name="to" placeholder="anyone@example.com" required />
         </label>
         <button type="submit">Dial</button>
+        <button type="button" id="call-local">Dial Local Echo</button>
       </form>
     </fieldset>
     <fieldset>
