@@ -109,6 +109,8 @@ phone.on("ring", (call) => {
 
 Processes expose Web Streams (`stdin`, `stdout`, optional `stderr`), making the model portable across Node, browsers, and React Native once platform adapters are supplied.
 
+In browser environments, use `call.getWebStream()` to access `{ readable, writable }` streams instead of the Node.js `Duplex` returned by `getStream()`.
+
 ### Browser Usage (Preview)
 
 Trimphone can run in the browser by swapping in the `BrowserWebSocketTransport`. For simple message flows:

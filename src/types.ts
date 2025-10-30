@@ -149,4 +149,8 @@ export interface Call extends EventEmitter {
   hangup(reason?: string): Promise<void> | void;
   send(message: unknown, contentType?: MessagePayload["contentType"]): void;
   getStream(): Duplex;
+  getWebStream?(): {
+    readable: ReadableStream<Uint8Array>;
+    writable: WritableStream<Uint8Array>;
+  };
 }

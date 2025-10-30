@@ -12,7 +12,11 @@ export interface CallController {
   answer(callId: string): void;
   hangup(callId: string, reason?: string): void;
   send(callId: string, payload: MessagePayload): void;
-  getStream(callId: string): Duplex;
+  getStream?(callId: string): Duplex;
+  getWebStream?(callId: string): {
+    readable: ReadableStream<Uint8Array>;
+    writable: WritableStream<Uint8Array>;
+  };
 }
 
 export interface CallParams {
@@ -88,12 +92,26 @@ export class Call extends EventEmitter {
   }
 
   getStream(): Duplex {
+    if (!this.controller.getStream) {
+      throw new Error("Node.js streams are not available; use getWebStream() instead");
+    }
     return this.controller.getStream(this.id);
+  }
+
+  getWebStream(): { readable: ReadableStream<Uint8Array>; writable: WritableStream<Uint8Array> } {
+    if (!this.controller.getWebStream) {
+      throw new Error("Web streams are not available for this call");
+    }
+    return this.controller.getWebStream(this.id);
   }
 
   async tunnel(process: TrimphoneProcess, options: ProcessTunnelOptions = {}): Promise<ProcessTunnelHandle> {
     if (this.state !== "active") {
       throw new Error("Cannot tunnel on inactive call");
+    }
+
+    if (!this.controller.getStream) {
+      throw new Error("Process tunnelling is only supported in Node.js environments at this time");
     }
 
     await process.start?.();

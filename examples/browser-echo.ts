@@ -1,4 +1,4 @@
-import { Trimphone, BrowserWebSocketTransport, EchoProcess } from "trimphone";
+import { Trimphone, BrowserWebSocketTransport } from "trimphone";
 
 const url = (window as any).SYSTEMX_URL ?? "wss://engram-fi-1.entrained.ai:2096";
 
@@ -31,7 +31,21 @@ async function main() {
 
   phone.on("ring", (call) => {
     call.answer();
-    void call.tunnel(new EchoProcess());
+    const { readable, writable } = call.getWebStream();
+    const reader = readable.getReader();
+    const writer = writable.getWriter();
+
+    (async () => {
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done || !value) {
+          break;
+        }
+        await writer.write(value);
+      }
+    })().catch((error) => {
+      console.error("Echo loop failed", error);
+    });
   });
 }
 

@@ -12,6 +12,7 @@ import type { Transport, TransportFactory } from "./transport";
 import { Call, type CallController } from "./call";
 import { isValidAddress } from "./utils";
 import { createWebSocketTransport } from "./transports/websocketTransport";
+import { BrowserTunnelStream } from "./web/tunnelStream";
 import { TunnelStream } from "./tunnelStream";
 
 type EventKeys = keyof TrimphoneEvents;
@@ -39,6 +40,49 @@ const DEFAULTS = {
   debug: false,
 } as const;
 
+function encodeBase64(bytes: Uint8Array): string {
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(bytes).toString("base64");
+  }
+  let binary = "";
+  bytes.forEach((b) => {
+    binary += String.fromCharCode(b);
+  });
+  return btoa(binary);
+}
+
+function decodeBase64(data: unknown): Uint8Array {
+  if (typeof data === "string") {
+    if (typeof Buffer !== "undefined") {
+      return new Uint8Array(Buffer.from(data, "base64"));
+    }
+    const binary = atob(data);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes;
+  }
+  if (data instanceof ArrayBuffer) {
+    return new Uint8Array(data);
+  }
+  if (ArrayBuffer.isView(data)) {
+    const view = data as ArrayBufferView;
+    return new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  }
+  if (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) {
+    return new Uint8Array(data);
+  }
+  return new Uint8Array();
+}
+
+function toNodeBuffer(bytes: Uint8Array): Buffer {
+  if (typeof Buffer === "undefined") {
+    throw new Error("Buffer is not available in this environment");
+  }
+  return Buffer.from(bytes);
+}
+
 export class Trimphone extends EventEmitter {
   private readonly urls: string[];
   private readonly transportFactory: TransportFactory;
@@ -61,7 +105,8 @@ export class Trimphone extends EventEmitter {
 
   private readonly pendingDials: PendingDial[] = [];
   private readonly calls: Map<string, Call> = new Map();
-  private readonly streams: Map<string, TunnelStream> = new Map();
+  private readonly streams: Map<string, TunnelStream | BrowserTunnelStream> = new Map();
+  private useWebStreams = false;
 
   private heartbeatTimer: NodeJS.Timeout | null = null;
   private heartbeatTimeoutTimer: NodeJS.Timeout | null = null;
@@ -215,6 +260,7 @@ export class Trimphone extends EventEmitter {
 
     const transport = this.transportFactory();
     this.transport = transport;
+    this.useWebStreams = transport.constructor?.name === "BrowserWebSocketTransport";
 
     transport.on("message", (raw) => this.handleRawMessage(raw));
     transport.on("close", (code: number, reason?: string) => this.handleTransportClose(code, reason));
@@ -442,24 +488,14 @@ export class Trimphone extends EventEmitter {
         // Ignore parse failures and fall back to raw string.
       }
     } else if (message.content_type === "binary") {
-      let buffer: Buffer;
-      if (typeof data === "string") {
-        buffer = Buffer.from(data, "base64");
-      } else if (Buffer.isBuffer(data)) {
-        buffer = data;
-      } else if (data instanceof ArrayBuffer) {
-        buffer = Buffer.from(data);
-      } else if (data instanceof Uint8Array) {
-        buffer = Buffer.from(data);
-      } else {
-        buffer = Buffer.alloc(0);
-      }
-
+      const bytes = decodeBase64(data);
       const stream = this.streams.get(message.call_id);
-      if (stream) {
-        stream.pushChunk(buffer);
+      if (stream instanceof BrowserTunnelStream) {
+        stream.pushChunk(bytes);
+      } else if (stream instanceof TunnelStream) {
+        stream.pushChunk(toNodeBuffer(bytes));
       }
-      call.receiveMessage(buffer);
+      call.receiveMessage(this.useWebStreams ? bytes : toNodeBuffer(bytes));
       return;
     }
 
@@ -488,6 +524,50 @@ export class Trimphone extends EventEmitter {
   }
 
   private createCallController(): CallController {
+    const sendMessage = (callId: string, payload: MessagePayload) => {
+      const contentType = payload.contentType ?? "text";
+      let data: unknown = payload.data;
+
+      if (contentType === "json" && typeof payload.data !== "string") {
+        data = JSON.stringify(payload.data);
+      } else if (contentType === "binary") {
+        if (payload.data instanceof ArrayBuffer) {
+          data = encodeBase64(new Uint8Array(payload.data));
+        } else if (payload.data instanceof Uint8Array) {
+          data = encodeBase64(payload.data);
+        } else if (typeof Buffer !== "undefined" && Buffer.isBuffer(payload.data)) {
+          data = payload.data.toString("base64");
+        } else {
+          throw new Error("Binary payload must be Buffer, Uint8Array, or ArrayBuffer");
+        }
+      }
+
+      this.send({
+        type: "MSG",
+        call_id: callId,
+        data,
+        content_type: contentType,
+      });
+    };
+
+    if (this.useWebStreams) {
+      return {
+        answer: (callId: string) => {
+          this.send({ type: "ANSWER", call_id: callId });
+        },
+        hangup: (callId: string, reason?: string) => {
+          this.closeStream(callId);
+          this.send({ type: "HANGUP", call_id: callId, reason });
+        },
+        send: (callId: string, payload: MessagePayload) => {
+          sendMessage(callId, payload);
+        },
+        getWebStream: (callId: string) => {
+          return this.getOrCreateBrowserStream(callId);
+        },
+      };
+    }
+
     return {
       answer: (callId: string) => {
         this.send({ type: "ANSWER", call_id: callId });
@@ -497,32 +577,10 @@ export class Trimphone extends EventEmitter {
         this.send({ type: "HANGUP", call_id: callId, reason });
       },
       send: (callId: string, payload: MessagePayload) => {
-        const contentType = payload.contentType ?? "text";
-        let data: unknown = payload.data;
-
-        if (contentType === "json" && typeof payload.data !== "string") {
-          data = JSON.stringify(payload.data);
-        } else if (contentType === "binary") {
-          if (payload.data instanceof ArrayBuffer) {
-            data = Buffer.from(payload.data).toString("base64");
-          } else if (payload.data instanceof Uint8Array) {
-            data = Buffer.from(payload.data).toString("base64");
-          } else if (Buffer.isBuffer(payload.data)) {
-            data = payload.data.toString("base64");
-          } else {
-            throw new Error("Binary payload must be Buffer, Uint8Array, or ArrayBuffer");
-          }
-        }
-
-        this.send({
-          type: "MSG",
-          call_id: callId,
-          data,
-          content_type: contentType,
-        });
+        sendMessage(callId, payload);
       },
       getStream: (callId: string) => {
-        return this.getOrCreateStream(callId);
+        return this.getOrCreateNodeStream(callId);
       },
     };
   }
@@ -626,13 +684,13 @@ export class Trimphone extends EventEmitter {
     this.transport.send(JSON.stringify(message));
   }
 
-  private getOrCreateStream(callId: string): TunnelStream {
-    let stream = this.streams.get(callId);
-    if (stream) {
-      return stream;
+  private getOrCreateNodeStream(callId: string): TunnelStream {
+    const existing = this.streams.get(callId);
+    if (existing instanceof TunnelStream) {
+      return existing;
     }
 
-    stream = new TunnelStream((chunk) => {
+    const stream = new TunnelStream((chunk) => {
       this.send({
         type: "MSG",
         call_id: callId,
@@ -646,8 +704,8 @@ export class Trimphone extends EventEmitter {
     });
 
     const cleanup = () => {
-      stream?.off("close", cleanup);
-      stream?.off("end", cleanup);
+      stream.off("close", cleanup);
+      stream.off("end", cleanup);
       this.streams.delete(callId);
     };
 
@@ -658,11 +716,35 @@ export class Trimphone extends EventEmitter {
     return stream;
   }
 
+  private getOrCreateBrowserStream(callId: string): BrowserTunnelStream {
+    const existing = this.streams.get(callId);
+    if (existing instanceof BrowserTunnelStream) {
+      return existing;
+    }
+
+    const stream = new BrowserTunnelStream((chunk) => {
+      this.send({
+        type: "MSG",
+        call_id: callId,
+        data: encodeBase64(chunk),
+        content_type: "binary",
+      });
+    });
+
+    this.streams.set(callId, stream);
+    return stream;
+  }
+
   private closeStream(callId: string) {
     const stream = this.streams.get(callId);
     if (!stream) {
       return;
     }
-    stream.endFromRemote();
+    if (stream instanceof BrowserTunnelStream) {
+      stream.end();
+    } else {
+      stream.endFromRemote();
+    }
+    this.streams.delete(callId);
   }
 }
