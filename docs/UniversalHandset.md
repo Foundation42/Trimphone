@@ -5,6 +5,7 @@
 > - ✅ Node adapter (`spawnNodeProcess`) and `MemoryProcess` examples shipped
 > - ✅ Initial component catalog (`EchoProcess`, `UppercaseProcess`, `PrefixProcess`, `SuffixProcess`)
 > - ✅ Browser transport (`BrowserWebSocketTransport`) and tunnel stream prototype
+> - ✅ Browser starter kit (Vite) demonstrating live SystemX calls
 > - 🚧 Browser/React Native adapters upcoming
 
 🌐 Cross-Platform Challenges

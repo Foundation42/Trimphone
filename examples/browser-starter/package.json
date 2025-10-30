@@ -1,0 +1,18 @@
+{
+  "name": "trimphone-browser-starter",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "trimphone": "file:../.."
+  },
+  "devDependencies": {
+    "typescript": "^5.3.3",
+    "vite": "^5.2.0"
+  }
+}

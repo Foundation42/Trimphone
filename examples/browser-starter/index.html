@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Trimphone Browser Starter</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 600px;
+        margin: 2rem auto;
+        padding: 0 1rem;
+      }
+      fieldset {
+        margin-bottom: 1rem;
+        border: 1px solid #ccc;
+        padding: 1rem;
+      }
+      pre {
+        background: #111;
+        color: #eee;
+        padding: 1rem;
+        min-height: 120px;
+        overflow: auto;
+      }
+      button {
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Trimphone Browser Starter</h1>
+    <p id="status">Connecting…</p>
+    <fieldset>
+      <legend>Dial An Address</legend>
+      <form id="dial-form">
+        <label>
+          To:
+          <input type="text" name="to" value="echo@services.io" required />
+        </label>
+        <button type="submit">Dial</button>
+      </form>
+    </fieldset>
+    <fieldset>
+      <legend>Send A Message</legend>
+      <form id="send-form">
+        <input type="text" name="message" value="Hello from the browser!" required />
+        <button type="submit">Send</button>
+      </form>
+    </fieldset>
+    <fieldset>
+      <legend>Call Output</legend>
+      <pre id="output"></pre>
+    </fieldset>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
