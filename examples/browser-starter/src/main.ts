@@ -103,7 +103,6 @@ async function bootstrap() {
       const writer = activeCallWriters.get(call.id);
       writer?.write(payload);
     }
-    sendInput!.value = "";
   });
 }
 
