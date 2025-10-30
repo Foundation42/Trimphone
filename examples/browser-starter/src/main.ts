@@ -1,7 +1,7 @@
 import {
   BrowserWebSocketTransport,
   Trimphone,
-  createMemoryProcess,
+  browserProcesses,
 } from "trimphone";
 
 const defaultUrl = "wss://engram-fi-1.entrained.ai:2096";
@@ -37,13 +37,7 @@ async function bootstrap() {
   phone.on("ring", (call) => {
     call.answer();
     const handle = setupCall(call, activeCalls);
-    // in-memory echo using MemoryProcess
-    void call.tunnel(
-      createMemoryProcess(async (input) => input),
-      {
-        forwardStderr: false,
-      },
-    );
+    void call.tunnel(new browserProcesses.components.EchoProcess());
     activeCalls.set(call.id, handle);
   });
 
