@@ -110,13 +110,28 @@ export class Call extends EventEmitter {
       throw new Error("Cannot tunnel on inactive call");
     }
 
-    if (!this.controller.getStream) {
-      throw new Error("Process tunnelling is only supported in Node.js environments at this time");
-    }
-
     await process.start?.();
 
-    const stream = this.getStream();
+    const hasNodeStreams = typeof Readable !== "undefined" && typeof Writable !== "undefined" && this.controller.getStream;
+    const hasWebStreams = typeof ReadableStream !== "undefined" && this.controller.getWebStream;
+
+    if (hasNodeStreams) {
+      return this.tunnelNodeProcess(process, options);
+    }
+
+    if (hasWebStreams) {
+      return this.tunnelWebProcess(process, options);
+    }
+
+    throw new Error("Process tunnelling is not supported in this environment");
+  }
+
+  private async tunnelNodeProcess(process: TrimphoneProcess, options: ProcessTunnelOptions): Promise<ProcessTunnelHandle> {
+    if (!this.controller.getStream) {
+      throw new Error("Node.js stream controller not available");
+    }
+
+    const stream = this.controller.getStream(this.id);
     const processStdout = Readable.fromWeb(process.stdout);
     const processStdin = Writable.fromWeb(process.stdin);
     const processStderr = process.stderr ? Readable.fromWeb(process.stderr) : null;
@@ -166,6 +181,86 @@ export class Call extends EventEmitter {
           processStderr.destroy?.();
         }
 
+        await process.stop?.(reason);
+      },
+    };
+
+    this.activeTunnels.add(handle);
+
+    if (options.closeOnHangup !== false) {
+      const onHangup = () => {
+        void handle.close("call_hangup");
+      };
+      this.once("hangup", onHangup);
+      const originalClose = handle.close.bind(handle);
+      handle.close = async (reason?: string) => {
+        this.removeListener("hangup", onHangup);
+        await originalClose(reason);
+      };
+    }
+
+    return handle;
+  }
+
+  private async tunnelWebProcess(process: TrimphoneProcess, options: ProcessTunnelOptions): Promise<ProcessTunnelHandle> {
+    if (!this.controller.getWebStream) {
+      throw new Error("Web stream controller not available");
+    }
+
+    const callStream = this.controller.getWebStream(this.id);
+    const processReadable = process.stdout;
+    const processWritable = process.stdin;
+    const processStderr = process.stderr;
+    const forwardStderr = options.forwardStderr !== false;
+
+    const stdoutPipe = processReadable.pipeTo(callStream.writable, { preventClose: true });
+    const stdinPipe = callStream.readable.pipeTo(processWritable, { preventClose: true });
+
+    let stderrReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
+    let stderrLoop: Promise<void> | null = null;
+    if (processStderr) {
+      stderrReader = processStderr.getReader();
+      stderrLoop = (async () => {
+        while (true) {
+          const { value, done } = await stderrReader.read();
+          if (done || !value) {
+            break;
+          }
+          if (forwardStderr) {
+            await callStream.writable.getWriter().write(value);
+          }
+          if (options.onStderrChunk) {
+            options.onStderrChunk(value);
+          }
+        }
+      })().catch((error) => {
+        this.emit("error", error);
+      });
+    }
+
+    let closed = false;
+
+    const handle: ProcessTunnelHandle = {
+      process,
+      close: async (reason?: string) => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        this.activeTunnels.delete(handle);
+
+        await Promise.allSettled([stdinPipe, stdoutPipe]);
+        try {
+          await processWritable.getWriter().close();
+        } catch {
+          /* ignore */
+        }
+        if (stderrReader) {
+          await stderrReader.cancel();
+        }
+        if (stderrLoop) {
+          await stderrLoop;
+        }
         await process.stop?.(reason);
       },
     };
