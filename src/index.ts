@@ -1,10 +1,10 @@
-export * from "./trimphone";
-export * from "./call";
-export * from "./tunnelStream";
+export { Trimphone } from "./trimphone";
+export { Call } from "./call";
+export { TunnelStream } from "./tunnelStream";
 export * from "./transport";
 export * from "./transports/websocketTransport";
 export * from "./types";
 export * from "./integration/runLiveTests";
 export * from "./process";
-export * from "./web/websocketTransport";
-export * from "./web/tunnelStream";
+export { BrowserWebSocketTransport } from "./web/websocketTransport";
+export { BrowserTunnelStream } from "./web/tunnelStream";

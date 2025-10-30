@@ -36,7 +36,7 @@ async function bootstrap() {
 
   phone.on("ring", (call) => {
     call.answer();
-    const handle = setupCall(call);
+    const handle = setupCall(call, activeCalls);
     // in-memory echo using MemoryProcess
     void call.tunnel(
       createMemoryProcess(async (input) => input),
@@ -52,11 +52,15 @@ async function bootstrap() {
     const formData = new FormData(dialForm);
     const to = formData.get("to")?.toString().trim();
     if (!to) return;
-
-    const call = await phone.dial(to);
-    const handle = setupCall(call);
-    activeCalls.set(call.id, handle);
-    log(`Dialled ${to}`);
+    try {
+      const call = await phone.dial(to);
+      const handle = setupCall(call, activeCalls);
+      activeCalls.set(call.id, handle);
+      log(`Dialled ${to}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log(`Dial failed: ${message}`);
+    }
   });
 
   sendForm?.addEventListener("submit", (event) => {
@@ -72,7 +76,7 @@ async function bootstrap() {
   });
 }
 
-function setupCall(call: import("trimphone").Call) {
+function setupCall(call: import("trimphone").Call, active: Map<string, ReturnType<typeof setupCall>>) {
   const stream = call.getWebStream();
   const reader = stream.readable.getReader();
   const writer = stream.writable.getWriter();
@@ -96,10 +100,21 @@ function setupCall(call: import("trimphone").Call) {
     reader.cancel().catch(() => {});
     writer.close().catch(() => {});
     log(`Call ${call.id.slice(0, 6)} ended`);
+    active.delete(call.id);
+  });
+
+  call.on("message", (msg) => {
+    if (typeof msg === "string") {
+      log(`[${call.id.slice(0, 6)}] ${msg}`);
+    }
   });
 
   return {
     send: (text: string) => {
+      if (closed) {
+        log(`Call ${call.id.slice(0, 6)} already closed`);
+        return;
+      }
       const payload = text.endsWith("\n") ? text : `${text}\n`;
       writer.write(textEncoder.encode(payload)).catch((error) => {
         log(`Write failed: ${(error as Error).message}`);

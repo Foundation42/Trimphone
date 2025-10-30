@@ -7,5 +7,5 @@ export interface MemoryProcessOptions {
 }
 
 export function createMemoryProcess(handler: MemoryProcessHandler, _options: MemoryProcessOptions = {}): TrimphoneProcess {
-  return new MemoryProcess(handler);
+  return new MemoryProcess(handler) as TrimphoneProcess;
 }

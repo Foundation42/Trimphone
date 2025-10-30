@@ -1,9 +1,7 @@
-import type { ReadableStream as ReadableStreamWeb, WritableStream as WritableStreamWeb } from "node:stream/web";
-
 export interface TrimphoneProcess {
-  readonly stdin: WritableStreamWeb<Uint8Array>;
-  readonly stdout: ReadableStreamWeb<Uint8Array>;
-  readonly stderr?: ReadableStreamWeb<Uint8Array>;
+  readonly stdin: WritableStream<Uint8Array>;
+  readonly stdout: ReadableStream<Uint8Array>;
+  readonly stderr?: ReadableStream<Uint8Array>;
   start?(): Promise<void> | void;
   stop?(reason?: string): Promise<void> | void;
 }

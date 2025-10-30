@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import type { Duplex } from "node:stream";
 import { Readable, Writable } from "node:stream";
+import type { ReadableStream as NodeReadableStream, WritableStream as NodeWritableStream } from "node:stream/web";
 import type { CallEvents, MessagePayload } from "./types";
 import type { ProcessTunnelHandle, ProcessTunnelOptions, TrimphoneProcess } from "./process/types";
 
@@ -132,9 +133,11 @@ export class Call extends EventEmitter {
     }
 
     const stream = this.controller.getStream(this.id);
-    const processStdout = Readable.fromWeb(process.stdout);
-    const processStdin = Writable.fromWeb(process.stdin);
-    const processStderr = process.stderr ? Readable.fromWeb(process.stderr) : null;
+    const processStdout = Readable.fromWeb(process.stdout as unknown as NodeReadableStream<Uint8Array>);
+    const processStdin = Writable.fromWeb(process.stdin as unknown as NodeWritableStream<Uint8Array>);
+    const processStderr = process.stderr
+      ? Readable.fromWeb(process.stderr as unknown as NodeReadableStream<Uint8Array>)
+      : null;
     const forwardStderr = options.forwardStderr !== false;
 
     const stderrListener = options.onStderrChunk

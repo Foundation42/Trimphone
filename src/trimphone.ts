@@ -83,6 +83,35 @@ function toNodeBuffer(bytes: Uint8Array): Buffer {
   return Buffer.from(bytes);
 }
 
+function isRegisteredMessage(message: SystemXInboundMessage): message is Extract<SystemXInboundMessage, { type: "REGISTERED" }> {
+  return message.type === "REGISTERED" && typeof (message as any).session_id === "string";
+}
+
+function isRingMessage(message: SystemXInboundMessage): message is Extract<SystemXInboundMessage, { type: "RING" }> {
+  const msg = message as any;
+  return message.type === "RING" && typeof msg.call_id === "string" && typeof msg.from === "string";
+}
+
+function isConnectedMessage(message: SystemXInboundMessage): message is Extract<SystemXInboundMessage, { type: "CONNECTED" }> {
+  const msg = message as any;
+  return message.type === "CONNECTED" && typeof msg.call_id === "string";
+}
+
+function isBusyMessage(message: SystemXInboundMessage): message is Extract<SystemXInboundMessage, { type: "BUSY" }> {
+  const msg = message as any;
+  return message.type === "BUSY" && typeof msg.reason === "string";
+}
+
+function isMsgMessage(message: SystemXInboundMessage): message is Extract<SystemXInboundMessage, { type: "MSG" }> {
+  const msg = message as any;
+  return message.type === "MSG" && typeof msg.call_id === "string";
+}
+
+function isHangupMessage(message: SystemXInboundMessage): message is Extract<SystemXInboundMessage, { type: "HANGUP" }> {
+  const msg = message as any;
+  return message.type === "HANGUP" && typeof msg.call_id === "string";
+}
+
 export class Trimphone extends EventEmitter {
   private readonly urls: string[];
   private readonly transportFactory: TransportFactory;
@@ -260,7 +289,7 @@ export class Trimphone extends EventEmitter {
 
     const transport = this.transportFactory();
     this.transport = transport;
-    this.useWebStreams = transport.constructor?.name === "BrowserWebSocketTransport";
+    this.useWebStreams = (transport as any).platform === "browser";
 
     transport.on("message", (raw) => this.handleRawMessage(raw));
     transport.on("close", (code: number, reason?: string) => this.handleTransportClose(code, reason));
@@ -384,7 +413,11 @@ export class Trimphone extends EventEmitter {
   private handleMessage(message: SystemXInboundMessage) {
     switch (message.type) {
       case "REGISTERED":
-        this.sessionId = message.session_id;
+        if (!isRegisteredMessage(message)) {
+          this.emit("error", new Error("Malformed REGISTERED message"));
+          break;
+        }
+        this.sessionId = message.session_id ?? null;
         this.registerDeferred?.resolve();
         if (this.registeredAddress) {
           this.emit("registered", this.registeredAddress);
@@ -399,23 +432,33 @@ export class Trimphone extends EventEmitter {
         break;
 
       case "RING":
-        this.handleIncomingRing(message);
+        if (isRingMessage(message)) {
+          this.handleIncomingRing(message);
+        }
         break;
 
       case "CONNECTED":
-        this.handleConnected(message);
+        if (isConnectedMessage(message)) {
+          this.handleConnected(message);
+        }
         break;
 
       case "BUSY":
-        this.handleBusy(message);
+        if (isBusyMessage(message)) {
+          this.handleBusy(message);
+        }
         break;
 
       case "MSG":
-        this.handleCallMessage(message);
+        if (isMsgMessage(message)) {
+          this.handleCallMessage(message);
+        }
         break;
 
       case "HANGUP":
-        this.handleHangup(message);
+        if (isHangupMessage(message)) {
+          this.handleHangup(message);
+        }
         break;
 
       case "HEARTBEAT_ACK":

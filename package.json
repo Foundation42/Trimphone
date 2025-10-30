@@ -17,7 +17,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "prepare": "tsc -p tsconfig.json",
+    "prepare": "tsc -p tsconfig.build.json",
     "test": "bun test",
     "test:live": "bun run src/cli.ts test --live"
   },

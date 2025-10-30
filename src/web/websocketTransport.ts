@@ -10,6 +10,7 @@ export interface BrowserWebSocketOptions {
 export class BrowserWebSocketTransport extends BaseTransport {
   private socket: WebSocketLike | null = null;
   private readonly factory: WebSocketFactory;
+  public readonly platform = "browser" as const;
 
   constructor(options: BrowserWebSocketOptions = {}) {
     super();

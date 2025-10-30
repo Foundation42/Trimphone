@@ -16,9 +16,9 @@ export function spawnNodeProcess(
     ...options,
   });
 
-  const stdin = Writable.toWeb(child.stdin);
-  const stdout = Readable.toWeb(child.stdout);
-  const stderr = Readable.toWeb(child.stderr);
+  const stdin = Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>;
+  const stdout = Readable.toWeb(child.stdout) as unknown as ReadableStream<Uint8Array>;
+  const stderr = Readable.toWeb(child.stderr) as unknown as ReadableStream<Uint8Array>;
 
   return {
     stdin,

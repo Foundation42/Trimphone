@@ -5,16 +5,6 @@ const textDecoder = new TextDecoder();
 
 export type MemoryProcessHandler = (input: string) => string | Promise<string>;
 
-const encoder = textEncoder;
-const decoder = textDecoder;
-
-function toUint8Array(input: Uint8Array | ArrayBufferLike): Uint8Array {
-  if (input instanceof Uint8Array) {
-    return input;
-  }
-  return new Uint8Array(input);
-}
-
 export class MemoryProcess implements TrimphoneProcess {
   public readonly stdout: ReadableStream<Uint8Array>;
   public readonly stdin: WritableStream<Uint8Array>;

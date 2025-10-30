@@ -136,7 +136,10 @@ export type SystemXInboundMessage =
       type: "HEARTBEAT_ACK";
       timestamp: number;
     }
-  | Record<string, unknown>;
+  | {
+      type: string;
+      [key: string]: unknown;
+    };
 
 // Forward declarations to avoid circular imports.
 // Implementations will augment these types later.

@@ -9,6 +9,7 @@ export class WebSocketTransport extends BaseTransport {
   private socket: WebSocket | null = null;
   private readonly url?: string;
   private readonly options: WebSocketTransportOptions;
+  public readonly platform = "node" as const;
 
   constructor(options: WebSocketTransportOptions = {}) {
     super();
@@ -71,8 +72,16 @@ export class WebSocketTransport extends BaseTransport {
     if (!this.socket || this.state !== "open") {
       throw new Error("WebSocketTransport is not open");
     }
-
-    this.socket.send(data);
+    if (
+      typeof data === "string" ||
+      (typeof Buffer !== "undefined" && Buffer.isBuffer(data)) ||
+      data instanceof ArrayBuffer ||
+      ArrayBuffer.isView(data)
+    ) {
+      this.socket.send(data as any);
+    } else {
+      this.socket.send(JSON.stringify(data));
+    }
   }
 
   close(code?: number, reason?: string): void {
