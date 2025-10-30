@@ -29,21 +29,27 @@ interface PendingDial {
   deferred: Deferred<Call>;
 }
 
-const DEFAULT_OPTIONS: Required<Pick<TrimphoneOptions, "autoReconnect" | "heartbeatIntervalMs" | "heartbeatTimeoutMs" | "reconnectBackoffMs" | "maxReconnectBackoffMs" | "registerOnConnect" | "debug">> =
-  {
-    autoReconnect: true,
-    heartbeatIntervalMs: 30_000,
-    heartbeatTimeoutMs: 60_000,
-    reconnectBackoffMs: 1_000,
-    maxReconnectBackoffMs: 30_000,
-    registerOnConnect: true,
-    debug: false,
-  };
+const DEFAULTS = {
+  autoReconnect: true,
+  heartbeatIntervalMs: 30_000,
+  heartbeatTimeoutMs: 60_000,
+  reconnectBackoffMs: 1_000,
+  maxReconnectBackoffMs: 30_000,
+  registerOnConnect: true,
+  debug: false,
+} as const;
 
 export class Trimphone extends EventEmitter {
   private readonly urls: string[];
-  private readonly options: TrimphoneOptions;
   private readonly transportFactory: TransportFactory;
+
+  private readonly autoReconnect: boolean;
+  private readonly heartbeatIntervalMs: number;
+  private readonly heartbeatTimeoutMs: number;
+  private readonly registerOnConnect: boolean;
+  private readonly maxReconnectBackoffMs: number;
+  private readonly debugEnabled: boolean;
+  private readonly baseReconnectBackoffMs: number;
 
   private transport: Transport | null = null;
   private connectionState: ConnectionState = "disconnected";
@@ -57,38 +63,60 @@ export class Trimphone extends EventEmitter {
   private readonly calls: Map<string, Call> = new Map();
   private readonly streams: Map<string, TunnelStream> = new Map();
 
+  private heartbeatTimer: NodeJS.Timeout | null = null;
+  private heartbeatTimeoutTimer: NodeJS.Timeout | null = null;
+  private lastHeartbeatAck = Date.now();
+
+  private reconnectTimer: NodeJS.Timeout | null = null;
+  private currentReconnectDelay: number;
+  private shouldAttemptReconnect = true;
+  private manualCloseRequested = false;
+
   constructor(url: string | string[], options: TrimphoneOptions = {}) {
     super();
+
     this.urls = Array.isArray(url) ? url : [url];
     if (this.urls.length === 0) {
       throw new Error("At least one SystemX endpoint URL is required");
     }
 
-    this.options = { ...DEFAULT_OPTIONS, ...options };
+    const merged = { ...DEFAULTS, ...options };
+
     this.transportFactory = options.transportFactory ?? (() => createWebSocketTransport());
+    this.autoReconnect = merged.autoReconnect;
+    this.heartbeatIntervalMs = merged.heartbeatIntervalMs;
+    this.heartbeatTimeoutMs = merged.heartbeatTimeoutMs;
+    this.registerOnConnect = merged.registerOnConnect;
+    this.maxReconnectBackoffMs = merged.maxReconnectBackoffMs;
+    this.baseReconnectBackoffMs = merged.reconnectBackoffMs;
+    this.currentReconnectDelay = merged.reconnectBackoffMs;
+    this.debugEnabled = merged.debug;
   }
 
   async register(address: string, options: Omit<RegisterOptions, "address"> = {}): Promise<void> {
     if (!isValidAddress(address)) {
       throw new Error("Invalid SystemX address");
     }
+
     this.registeredAddress = address;
     this.registerOptions = options;
+    this.shouldAttemptReconnect = true;
+    this.manualCloseRequested = false;
 
     await this.ensureConnected();
 
     if (this.registerDeferred) {
-      // If a registration is already in flight, return that promise instead of creating a new one.
+      // Already inflight; let the existing promise resolve.
       return new Promise<void>((resolve, reject) => {
-        const prevDeferred = this.registerDeferred!;
-        const chainedResolve = prevDeferred.resolve;
-        const chainedReject = prevDeferred.reject;
-        prevDeferred.resolve = (value) => {
-          chainedResolve(value);
+        const prev = this.registerDeferred!;
+        const originalResolve = prev.resolve;
+        const originalReject = prev.reject;
+        prev.resolve = (value) => {
+          originalResolve(value);
           resolve(value);
         };
-        prevDeferred.reject = (error) => {
-          chainedReject(error);
+        prev.reject = (error) => {
+          originalReject(error);
           reject(error);
         };
       });
@@ -98,22 +126,14 @@ export class Trimphone extends EventEmitter {
       resolve: () => {},
       reject: () => {},
     };
+
     const promise = new Promise<void>((resolve, reject) => {
       deferred.resolve = resolve;
       deferred.reject = reject;
     });
+
     this.registerDeferred = deferred;
-
-    this.send({
-      type: "REGISTER",
-      address,
-      metadata: options.metadata,
-      concurrency: options.concurrency,
-      max_listeners: options.maxListeners,
-      max_sessions: options.maxSessions,
-      pool_size: options.poolSize,
-    });
-
+    this.sendRegisterMessage();
     return promise;
   }
 
@@ -122,12 +142,16 @@ export class Trimphone extends EventEmitter {
       throw new Error("Invalid SystemX address");
     }
 
+    this.shouldAttemptReconnect = true;
+    this.manualCloseRequested = false;
+
     await this.ensureConnected();
 
     const deferred: Deferred<Call> = {
       resolve: () => {},
       reject: () => {},
     };
+
     const promise = new Promise<Call>((resolve, reject) => {
       deferred.resolve = resolve;
       deferred.reject = reject;
@@ -144,7 +168,27 @@ export class Trimphone extends EventEmitter {
     return promise;
   }
 
+  heartbeat(): void {
+    if (this.connectionState !== "connected") {
+      return;
+    }
+    this.send({ type: "HEARTBEAT" });
+    this.scheduleHeartbeatTimeout();
+  }
+
+  async reconnect(): Promise<void> {
+    this.shouldAttemptReconnect = true;
+    this.manualCloseRequested = false;
+    this.clearReconnectTimer();
+    return this.ensureConnected();
+  }
+
   close(code?: number, reason?: string) {
+    this.shouldAttemptReconnect = false;
+    this.manualCloseRequested = true;
+    this.clearHeartbeatTimers();
+    this.clearReconnectTimer();
+
     if (this.transport) {
       this.transport.close(code, reason);
     }
@@ -162,13 +206,15 @@ export class Trimphone extends EventEmitter {
     if (this.connectionState === "connected") {
       return;
     }
+
     if (this.connectPromise) {
       return this.connectPromise;
     }
 
+    this.connectionState = "connecting";
+
     const transport = this.transportFactory();
     this.transport = transport;
-    this.connectionState = "connecting";
 
     transport.on("message", (raw) => this.handleRawMessage(raw));
     transport.on("close", (code: number, reason?: string) => this.handleTransportClose(code, reason));
@@ -176,20 +222,29 @@ export class Trimphone extends EventEmitter {
 
     this.connectPromise = new Promise<void>((resolve, reject) => {
       const handleOpen = () => {
-        this.connectionState = "connected";
-        this.connectPromise = null;
-        this.emit("connected");
         transport.off("open", handleOpen);
         transport.off("error", handleConnectError);
+
+        this.connectionState = "connected";
+        this.connectPromise = null;
+        this.currentReconnectDelay = this.baseReconnectBackoffMs;
+        this.emit("connected");
+        this.startHeartbeat();
+
+        if (this.registeredAddress && this.registerOnConnect) {
+          this.sendRegisterMessage();
+        }
+
         resolve();
       };
 
       const handleConnectError = (error: Error) => {
+        transport.off("open", handleOpen);
+        transport.off("error", handleConnectError);
+
         if (this.connectionState === "connecting") {
           this.connectionState = "disconnected";
           this.connectPromise = null;
-          transport.off("open", handleOpen);
-           transport.off("error", handleConnectError);
           reject(error);
         }
       };
@@ -197,9 +252,9 @@ export class Trimphone extends EventEmitter {
       transport.on("open", handleOpen);
       transport.on("error", handleConnectError);
 
-      const url = this.urls[0];
+      const targetUrl = this.urls[0];
       transport
-        .connect({ url })
+        .connect({ url: targetUrl })
         .catch((error) => {
           handleConnectError(error as Error);
         });
@@ -213,39 +268,50 @@ export class Trimphone extends EventEmitter {
       return;
     }
 
+    if (this.debugEnabled) {
+      console.debug("Trimphone transport closed", { code, reason });
+    }
+
     this.connectionState = "disconnected";
     this.transport = null;
     this.connectPromise = null;
+
+    this.clearHeartbeatTimers();
 
     this.registerDeferred?.reject(new Error("Disconnected"));
     this.registerDeferred = null;
 
     while (this.pendingDials.length > 0) {
-      const dial = this.pendingDials.shift();
-      dial?.deferred.reject(new Error("Disconnected"));
+      const pending = this.pendingDials.shift();
+      pending?.deferred.reject(new Error("Disconnected"));
     }
 
     for (const [, call] of this.calls) {
       call.receiveHangup("disconnected");
     }
     this.calls.clear();
+
     for (const callId of Array.from(this.streams.keys())) {
       this.closeStream(callId);
     }
 
     this.emit("disconnected", { code, reason });
+
+    if (this.autoReconnect && this.shouldAttemptReconnect && !this.manualCloseRequested) {
+      this.scheduleReconnect();
+    }
   }
 
   private handleTransportError(error: Error) {
-    this.emit("error", error);
-    if (this.connectionState === "connecting" && this.connectPromise) {
-      // Fail the connection attempt if still pending.
-      this.connectPromise = null;
+    if (this.debugEnabled) {
+      console.debug("Trimphone transport error", error);
     }
+    this.emit("error", error);
   }
 
   private handleRawMessage(raw: unknown) {
     let json: string | null = null;
+
     if (typeof raw === "string") {
       json = raw;
     } else if (Buffer.isBuffer(raw)) {
@@ -306,8 +372,16 @@ export class Trimphone extends EventEmitter {
         this.handleHangup(message);
         break;
 
+      case "HEARTBEAT_ACK":
+        this.lastHeartbeatAck = Date.now();
+        this.emit("heartbeatAck", message.timestamp);
+        if (this.heartbeatTimeoutTimer) {
+          clearTimeout(this.heartbeatTimeoutTimer);
+          this.heartbeatTimeoutTimer = null;
+        }
+        break;
+
       default:
-        // Ignore unsupported or informational messages for now.
         break;
     }
   }
@@ -359,12 +433,13 @@ export class Trimphone extends EventEmitter {
     if (!call) {
       return;
     }
+
     let data = message.data;
     if (message.content_type === "json" && typeof data === "string") {
       try {
         data = JSON.parse(data);
       } catch {
-        // If parsing fails, fall back to raw string.
+        // Ignore parse failures and fall back to raw string.
       }
     } else if (message.content_type === "binary") {
       let buffer: Buffer;
@@ -387,6 +462,7 @@ export class Trimphone extends EventEmitter {
       call.receiveMessage(buffer);
       return;
     }
+
     call.receiveMessage(data);
   }
 
@@ -428,7 +504,7 @@ export class Trimphone extends EventEmitter {
           data = JSON.stringify(payload.data);
         } else if (contentType === "binary") {
           if (payload.data instanceof ArrayBuffer) {
-            data = Buffer.from(payload.data as ArrayBuffer).toString("base64");
+            data = Buffer.from(payload.data).toString("base64");
           } else if (payload.data instanceof Uint8Array) {
             data = Buffer.from(payload.data).toString("base64");
           } else if (Buffer.isBuffer(payload.data)) {
@@ -451,12 +527,103 @@ export class Trimphone extends EventEmitter {
     };
   }
 
+  private sendRegisterMessage(): void {
+    if (!this.registeredAddress) {
+      return;
+    }
+    const options = this.registerOptions ?? {};
+    this.send({
+      type: "REGISTER",
+      address: this.registeredAddress,
+      metadata: options.metadata,
+      concurrency: options.concurrency,
+      max_listeners: options.maxListeners,
+      max_sessions: options.maxSessions,
+      pool_size: options.poolSize,
+    });
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectTimer) {
+      return;
+    }
+
+    const delay = this.currentReconnectDelay;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.ensureConnected()
+        .then(() => {
+          this.currentReconnectDelay = this.baseReconnectBackoffMs;
+        })
+        .catch(() => {
+          this.currentReconnectDelay = Math.min(
+            this.currentReconnectDelay * 2,
+            this.maxReconnectBackoffMs,
+          );
+          this.scheduleReconnect();
+        });
+    }, delay);
+  }
+
+  private startHeartbeat() {
+    this.clearHeartbeatTimers();
+    this.lastHeartbeatAck = Date.now();
+
+    if (this.heartbeatIntervalMs <= 0) {
+      return;
+    }
+
+    this.send({ type: "HEARTBEAT" });
+    this.scheduleHeartbeatTimeout();
+
+    this.heartbeatTimer = setInterval(() => {
+      if (this.connectionState !== "connected") {
+        return;
+      }
+      this.send({ type: "HEARTBEAT" });
+      this.scheduleHeartbeatTimeout();
+    }, this.heartbeatIntervalMs);
+  }
+
+  private scheduleHeartbeatTimeout() {
+    if (this.heartbeatTimeoutMs <= 0) {
+      return;
+    }
+    if (this.heartbeatTimeoutTimer) {
+      return;
+    }
+    this.heartbeatTimeoutTimer = setTimeout(() => {
+      const sinceAck = Date.now() - this.lastHeartbeatAck;
+      if (sinceAck >= this.heartbeatTimeoutMs && this.transport) {
+        this.transport.close(4000, "heartbeat_timeout");
+      }
+      this.heartbeatTimeoutTimer = null;
+      }, this.heartbeatTimeoutMs);
+  }
+
+  private clearHeartbeatTimers() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+    if (this.heartbeatTimeoutTimer) {
+      clearTimeout(this.heartbeatTimeoutTimer);
+      this.heartbeatTimeoutTimer = null;
+    }
+  }
+
+  private clearReconnectTimer() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
   private send(message: SystemXOutboundMessage) {
     if (!this.transport || this.connectionState !== "connected") {
       throw new Error("Cannot send message while disconnected");
     }
-    const payload = JSON.stringify(message);
-    this.transport.send(payload);
+    this.transport.send(JSON.stringify(message));
   }
 
   private getOrCreateStream(callId: string): TunnelStream {
@@ -479,13 +646,14 @@ export class Trimphone extends EventEmitter {
     });
 
     const cleanup = () => {
-      stream.off("close", cleanup);
-      stream.off("end", cleanup);
+      stream?.off("close", cleanup);
+      stream?.off("end", cleanup);
       this.streams.delete(callId);
     };
 
     stream.on("close", cleanup);
     stream.on("end", cleanup);
+
     this.streams.set(callId, stream);
     return stream;
   }

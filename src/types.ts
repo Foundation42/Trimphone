@@ -53,6 +53,7 @@ export interface TrimphoneEvents {
   ring: (call: Call) => void;
   registered: (address: string) => void;
   registrationFailed: (reason: string) => void;
+  heartbeatAck: (timestamp: number) => void;
 }
 
 export type SystemXOutboundMessage =

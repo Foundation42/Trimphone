@@ -7,6 +7,7 @@ class MockTransport extends EventEmitter implements Transport {
   public state: import("../../src/transport").TransportState = "idle";
   public sent: unknown[] = [];
   public connectCalls: TransportConnectOptions[] = [];
+  public closed: { code?: number; reason?: string } | null = null;
 
   async connect(options: TransportConnectOptions): Promise<void> {
     this.connectCalls.push(options);
@@ -19,6 +20,7 @@ class MockTransport extends EventEmitter implements Transport {
 
   close(code?: number, reason?: string): void {
     this.state = "closed";
+    this.closed = { code, reason };
     this.emit("close", code ?? 1000, reason);
   }
 
@@ -33,6 +35,21 @@ class MockTransport extends EventEmitter implements Transport {
 
   fail(error: Error) {
     this.emit("error", error);
+  }
+
+  getMessagesOfType(type: string) {
+    return this.sent
+      .map((raw) => {
+        if (typeof raw === "string") {
+          try {
+            return JSON.parse(raw);
+          } catch {
+            return null;
+          }
+        }
+        return raw as Record<string, unknown>;
+      })
+      .filter((message): message is Record<string, unknown> => Boolean(message && message.type === type));
   }
 }
 
@@ -62,14 +79,12 @@ describe("Trimphone core", () => {
     await nextTick();
 
     expect(transport.connectCalls).toHaveLength(1);
-    const sent = transport.sent;
-    expect(sent).toHaveLength(1);
-    expect(sent[0]).toEqual(
-      JSON.stringify({
-        type: "REGISTER",
-        address: "alice@example.com",
-      }),
-    );
+    const registerMessages = transport.getMessagesOfType("REGISTER");
+    expect(registerMessages.length).toBeGreaterThanOrEqual(1);
+    expect(registerMessages[registerMessages.length - 1]).toMatchObject({ address: "alice@example.com" });
+
+    const heartbeatMessages = transport.getMessagesOfType("HEARTBEAT");
+    expect(heartbeatMessages.length).toBeGreaterThanOrEqual(1);
 
     transport.receive({
       type: "REGISTERED",
@@ -136,26 +151,17 @@ describe("Trimphone core", () => {
     const call = rings[0];
     call.answer();
 
-    const lastMessage = transport.sent[transport.sent.length - 1];
-    expect(lastMessage).toEqual(
-      JSON.stringify({
-        type: "ANSWER",
-        call_id: "call-1",
-      }),
-    );
+    const answerMessages = transport.getMessagesOfType("ANSWER");
+    expect(answerMessages[answerMessages.length - 1]).toMatchObject({ call_id: "call-1" });
   });
 
   it("routes MSG payloads to the correct call", async () => {
     const callPromise = phone.dial("service@example.com");
     transport.open();
     await nextTick();
-    const firstMessage = transport.sent[0];
-    expect(firstMessage).toEqual(
-      JSON.stringify({
-        type: "DIAL",
-        to: "service@example.com",
-      }),
-    );
+    const dialMessages = transport.getMessagesOfType("DIAL");
+    expect(dialMessages).toHaveLength(1);
+    expect(dialMessages[0]).toMatchObject({ to: "service@example.com" });
 
     transport.receive({
       type: "CONNECTED",
@@ -191,16 +197,13 @@ describe("Trimphone core", () => {
     const call = await callPromise;
     call.send("ping");
 
-    const lastMessage = transport.sent[transport.sent.length - 1];
-
-    expect(lastMessage).toEqual(
-      JSON.stringify({
-        type: "MSG",
-        call_id: "call-77",
-        data: "ping",
-        content_type: "text",
-      }),
-    );
+    const messagePackets = transport.getMessagesOfType("MSG");
+    const msg = messagePackets[messagePackets.length - 1];
+    expect(msg).toMatchObject({
+      call_id: "call-77",
+      data: "ping",
+      content_type: "text",
+    });
   });
 
   it("hangs up active calls and emits hangup event", async () => {
@@ -220,14 +223,12 @@ describe("Trimphone core", () => {
 
     call.hangup("done");
 
-    const hangupMessage = transport.sent[transport.sent.length - 1];
-    expect(hangupMessage).toEqual(
-      JSON.stringify({
-        type: "HANGUP",
-        call_id: "call-55",
-        reason: "done",
-      }),
-    );
+    const hangupPackets = transport.getMessagesOfType("HANGUP");
+    const hangupMessage = hangupPackets[hangupPackets.length - 1];
+    expect(hangupMessage).toMatchObject({
+      call_id: "call-55",
+      reason: "done",
+    });
 
     transport.receive({
       type: "HANGUP",
@@ -273,15 +274,13 @@ describe("Trimphone core", () => {
 
     stream.write(Buffer.from("hello", "utf8"));
 
-    const last = transport.sent[transport.sent.length - 1];
-    expect(last).toEqual(
-      JSON.stringify({
-        type: "MSG",
-        call_id: "stream-call",
-        data: Buffer.from("hello").toString("base64"),
-        content_type: "binary",
-      }),
-    );
+    const outgoingChunks = transport.getMessagesOfType("MSG");
+    const last = outgoingChunks[outgoingChunks.length - 1];
+    expect(last).toMatchObject({
+      call_id: "stream-call",
+      data: Buffer.from("hello").toString("base64"),
+      content_type: "binary",
+    });
 
     transport.receive({
       type: "MSG",
@@ -309,5 +308,114 @@ describe("Trimphone core", () => {
     await nextTick();
 
     expect(ended).toBe(true);
+  });
+
+  it("emits heartbeatAck when heartbeat acknowledgements arrive", async () => {
+    const timestamps: number[] = [];
+    phone.on("heartbeatAck", (timestamp) => timestamps.push(timestamp));
+
+    const registerPromise = phone.register("heartbeat@example.com");
+    transport.open();
+    await nextTick();
+
+    transport.receive({
+      type: "HEARTBEAT_ACK",
+      timestamp: 123,
+    });
+
+    transport.receive({
+      type: "REGISTERED",
+      address: "heartbeat@example.com",
+      session_id: "session-hb",
+    });
+    await registerPromise;
+
+    expect(timestamps).toEqual([123]);
+  });
+
+  it("closes the transport when heartbeat acknowledgements are missed", async () => {
+    transport = new MockTransport();
+    phone = new Trimphone("wss://test", {
+      transportFactory: () => transport,
+      heartbeatIntervalMs: 5,
+      heartbeatTimeoutMs: 10,
+      autoReconnect: false,
+    });
+
+    const registerPromise = phone.register("timeout@example.com");
+    const disconnected = new Promise<void>((resolve) => {
+      phone.once("disconnected", () => resolve());
+    });
+    transport.open();
+    await nextTick();
+
+    transport.receive({
+      type: "REGISTERED",
+      address: "timeout@example.com",
+      session_id: "session-timeout",
+    });
+    await registerPromise;
+
+    await disconnected;
+
+    expect(transport.closed?.reason).toBe("heartbeat_timeout");
+  });
+
+  it("reconnects automatically after disconnect and re-registers", async () => {
+    const first = new MockTransport();
+    const second = new MockTransport();
+    let connectIndex = 0;
+    const transports = [first, second];
+
+    transport = transports[0];
+    phone = new Trimphone("wss://test", {
+      transportFactory: () => transports[Math.min(connectIndex++, transports.length - 1)],
+      heartbeatIntervalMs: 0,
+      autoReconnect: true,
+      reconnectBackoffMs: 5,
+      maxReconnectBackoffMs: 10,
+    });
+
+    const registrations: string[] = [];
+    phone.on("registered", (address) => registrations.push(address));
+
+    let currentTransport = transports[0];
+    const registerPromise = phone.register("reconnect@example.com");
+    currentTransport.open();
+    await nextTick();
+    currentTransport.receive({
+      type: "REGISTERED",
+      address: "reconnect@example.com",
+      session_id: "session-1",
+    });
+    await registerPromise;
+
+    currentTransport.emit("close", 1006, "network");
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    currentTransport = transports[1];
+    expect(currentTransport.connectCalls).toHaveLength(1);
+
+    currentTransport.open();
+    await nextTick();
+
+    const registerMessages = currentTransport.getMessagesOfType("REGISTER");
+    expect(registerMessages[registerMessages.length - 1]).toMatchObject({
+      address: "reconnect@example.com",
+    });
+
+    currentTransport.receive({
+      type: "REGISTERED",
+      address: "reconnect@example.com",
+      session_id: "session-2",
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(registrations).toEqual([
+      "reconnect@example.com",
+      "reconnect@example.com",
+    ]);
   });
 });
