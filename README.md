@@ -109,6 +109,31 @@ phone.on("ring", (call) => {
 
 Processes expose Web Streams (`stdin`, `stdout`, optional `stderr`), making the model portable across Node, browsers, and React Native once platform adapters are supplied.
 
+### Browser Usage (Preview)
+
+Trimphone can run in the browser by swapping in the `BrowserWebSocketTransport`. For simple message flows:
+
+```ts
+import { Trimphone, BrowserWebSocketTransport } from "trimphone";
+
+const phone = new Trimphone("wss://systemx.example.com", {
+  transportFactory: () => new BrowserWebSocketTransport(),
+});
+
+await phone.register("web-client@example.com");
+
+const call = await phone.dial("echo@services.io");
+call.send("Hello from the browser!");
+
+call.on("message", (msg) => {
+  console.log("Reply", msg);
+});
+```
+
+Web-stream tunnelling support (`BrowserTunnelStream`) is available for experimentation and will back `call.getStream()` in an upcoming release.
+
+See `examples/browser-echo.ts` for a minimal DOM demo (suitable for bundlers like Vite/Parcel). It registers a web client, dials another Trimphone address, and exposes a local echo responder using the process catalog.
+
 Reusable components built on this abstraction live under `trimphone/process`. For example:
 
 ```ts

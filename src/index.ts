@@ -6,3 +6,5 @@ export * from "./transports/websocketTransport";
 export * from "./types";
 export * from "./integration/runLiveTests";
 export * from "./process";
+export * from "./web/websocketTransport";
+export * from "./web/tunnelStream";
