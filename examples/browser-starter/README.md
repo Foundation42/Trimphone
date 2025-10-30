@@ -18,6 +18,8 @@ npm run dev -- --host
 
 Then open the printed local URL (default `http://localhost:5173`). Use `--host` if you want to test from other devices.
 
+Click **Dial Local Echo** to immediately call a built-in echo service registered inside the browser. This gives you an instant success case without needing any other address.
+
 ### Bun Dev Server
 
 You can also use Bun’s built-in dev server:
