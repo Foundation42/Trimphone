@@ -136,7 +136,7 @@ Web-stream tunnelling support (`BrowserTunnelStream`) is available for experimen
 
 See `examples/browser-echo.ts` for a minimal DOM demo (suitable for bundlers like Vite/Parcel). It registers a web client, dials another Trimphone address, and exposes a local echo responder using the process catalog.
 
-For a turnkey project, check out `examples/browser-starter` which ships with Vite configuration, UI scaffolding, and instructions.
+For a turnkey project, check out `examples/browser-starter` which ships with Vite configuration, UI scaffolding, and instructions. Run `npm run dev -- --host` (or `bun run index.html`) to try it locally, and `npm run build` to produce a deployable `dist/` folder. The starter also demonstrates multi-call status and catalog components via `browserProcesses`.
 
 Reusable components built on this abstraction live under `trimphone/process`. For example:
 

@@ -13,23 +13,51 @@ A minimal Vite setup that demonstrates how to use the Trimphone SDK directly fro
 ```bash
 cd trimphone/examples/browser-starter
 npm install
-npm run dev
+npm run dev -- --host
 ```
 
-Then open the printed local URL (default `http://localhost:5173`).
+Then open the printed local URL (default `http://localhost:5173`). Use `--host` if you want to test from other devices.
+
+### Bun Dev Server
+
+You can also use Bun’s built-in dev server:
+
+```bash
+bun install
+bun run index.html
+```
+
+This automatically polyfills Node globals for the browser build.
 
 ### Environment Variables
 
-You can override the SystemX URL by creating a `.env` file or setting the `VITE_SYSTEMX_URL` variable when running Vite:
+Override the SystemX endpoint via environment variable or `.env` file:
 
 ```bash
-VITE_SYSTEMX_URL=wss://your-systemx.example.com npm run dev
+VITE_SYSTEMX_URL=wss://your-systemx.example.com npm run dev -- --host
 ```
 
 ## What It Shows
 
 - Registers a browser handset using `BrowserWebSocketTransport`
 - Dials another Trimphone address and sends messages via Web Streams
-- Answers inbound calls with an in-memory `MemoryProcess` echo handler
+- Answers inbound calls with the catalog `EchoProcess`
+- Displays multi-call status (dialling, active, ended, failed) in real time
 
-Feel free to swap the echo handler with other catalog processes or your own logic.
+Swap the echo handler with other catalog processes or your own logic to expand the behaviour.
+
+## Building & Deploying
+
+```bash
+npm run build
+npx vite preview
+```
+
+For Bun users:
+
+```bash
+bun run build
+bun run preview
+```
+
+The produced `dist/` directory is ready to serve via any static host or edge platform.
