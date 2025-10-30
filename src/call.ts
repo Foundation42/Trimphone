@@ -1,6 +1,8 @@
 import { EventEmitter } from "node:events";
 import type { Duplex } from "node:stream";
+import { Readable, Writable } from "node:stream";
 import type { CallEvents, MessagePayload } from "./types";
+import type { ProcessTunnelHandle, ProcessTunnelOptions, TrimphoneProcess } from "./process/types";
 
 type EventKeys = keyof CallEvents;
 
@@ -42,6 +44,7 @@ export class Call extends EventEmitter {
   readonly direction: CallDirection;
   private state: CallState;
   private readonly controller: CallController;
+  private readonly activeTunnels = new Set<ProcessTunnelHandle>();
 
   constructor(params: CallParams) {
     super();
@@ -86,6 +89,84 @@ export class Call extends EventEmitter {
 
   getStream(): Duplex {
     return this.controller.getStream(this.id);
+  }
+
+  async tunnel(process: TrimphoneProcess, options: ProcessTunnelOptions = {}): Promise<ProcessTunnelHandle> {
+    if (this.state !== "active") {
+      throw new Error("Cannot tunnel on inactive call");
+    }
+
+    await process.start?.();
+
+    const stream = this.getStream();
+    const processStdout = Readable.fromWeb(process.stdout);
+    const processStdin = Writable.fromWeb(process.stdin);
+    const processStderr = process.stderr ? Readable.fromWeb(process.stderr) : null;
+    const forwardStderr = options.forwardStderr !== false;
+
+    const stderrListener = options.onStderrChunk
+      ? (chunk: Buffer) => {
+          const data = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+          options.onStderrChunk?.(data);
+        }
+      : null;
+
+    if (processStderr) {
+      if (forwardStderr) {
+        processStderr.pipe(stream, { end: false });
+      }
+      if (stderrListener) {
+        processStderr.on("data", stderrListener as (chunk: Buffer) => void);
+      }
+    }
+
+    processStdout.pipe(stream, { end: false });
+    stream.pipe(processStdin, { end: false });
+
+    let closed = false;
+
+    const handle: ProcessTunnelHandle = {
+      process,
+      close: async (reason?: string) => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        this.activeTunnels.delete(handle);
+
+        processStdout.unpipe(stream);
+        stream.unpipe(processStdin);
+        processStdin.end();
+        processStdout.destroy?.();
+        if (processStderr) {
+          if (forwardStderr) {
+            processStderr.unpipe(stream);
+          }
+          if (stderrListener) {
+            processStderr.removeListener("data", stderrListener as (chunk: Buffer) => void);
+          }
+          processStderr.destroy?.();
+        }
+
+        await process.stop?.(reason);
+      },
+    };
+
+    this.activeTunnels.add(handle);
+
+    if (options.closeOnHangup !== false) {
+      const onHangup = () => {
+        void handle.close("call_hangup");
+      };
+      this.once("hangup", onHangup);
+      const originalClose = handle.close.bind(handle);
+      handle.close = async (reason?: string) => {
+        this.removeListener("hangup", onHangup);
+        await originalClose(reason);
+      };
+    }
+
+    return handle;
   }
 
   /** @internal */

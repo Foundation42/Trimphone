@@ -77,6 +77,38 @@ const phone = new Trimphone(["wss://primary", "wss://backup"], {
 });
 ```
 
+### Process Tunnelling
+
+Trimphone can bridge calls to in-process components or OS-level processes via the universal process interface:
+
+```ts
+import { Trimphone, MemoryProcess, spawnNodeProcess } from "trimphone";
+
+const phone = new Trimphone(url);
+await phone.register("uppercase@trimphone.io");
+
+phone.on("ring", (call) => {
+  call.answer();
+
+  // In-memory component that uppercases text
+  const process = new MemoryProcess(async (input) => input.toUpperCase());
+  void call.tunnel(process);
+});
+
+// Bridge to a real bash shell
+phone.on("ring", (call) => {
+  call.answer();
+  const shell = spawnNodeProcess("bash", ["-i"]);
+  void call.tunnel(shell, {
+    onStderrChunk: (chunk) => {
+      console.error(`[shell stderr] ${Buffer.from(chunk).toString()}`);
+    },
+  });
+});
+```
+
+Processes expose Web Streams (`stdin`, `stdout`, optional `stderr`), making the model portable across Node, browsers, and React Native once platform adapters are supplied.
+
 ## Development
 
 - Install dependencies with `bun install`

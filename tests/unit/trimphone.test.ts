@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach } from "bun:test";
 import { EventEmitter } from "node:events";
 import { Trimphone } from "../../src/trimphone";
+import { MemoryProcess } from "../../src/process/memoryProcess";
 import type { Transport, TransportConnectOptions } from "../../src/transport";
 
 class MockTransport extends EventEmitter implements Transport {
@@ -308,6 +309,61 @@ describe("Trimphone core", () => {
     await nextTick();
 
     expect(ended).toBe(true);
+  });
+
+  it("tunnels processes using call.tunnel", async () => {
+    const registerPromise = phone.register("service@example.com");
+    transport.open();
+    await nextTick();
+    transport.receive({
+      type: "REGISTERED",
+      address: "service@example.com",
+      session_id: "session-process",
+    });
+    await registerPromise;
+
+    phone.on("ring", (call) => {
+      call.answer();
+      void call.tunnel(
+        new MemoryProcess(async (input) => {
+          return input.toUpperCase();
+        }),
+      );
+    });
+
+    transport.receive({
+      type: "RING",
+      call_id: "call-process",
+      from: "client@example.com",
+    });
+
+    await nextTick();
+
+    transport.receive({
+      type: "CONNECTED",
+      call_id: "call-process",
+      from: "client@example.com",
+    });
+
+    const payload = Buffer.from("hello world\n").toString("base64");
+    transport.receive({
+      type: "MSG",
+      call_id: "call-process",
+      data: payload,
+      content_type: "binary",
+    });
+
+    await nextTick();
+
+    const outbound = transport.getMessagesOfType("MSG");
+    const last = outbound[outbound.length - 1];
+    expect(Buffer.from(last.data as string, "base64").toString()).toBe("HELLO WORLD\n");
+
+    transport.receive({
+      type: "HANGUP",
+      call_id: "call-process",
+      reason: "normal",
+    });
   });
 
   it("emits heartbeatAck when heartbeat acknowledgements arrive", async () => {

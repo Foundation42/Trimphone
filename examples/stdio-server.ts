@@ -1,5 +1,5 @@
 import { Trimphone } from "../src/trimphone";
-import { spawn } from "node:child_process";
+import { spawnNodeProcess } from "../src/process";
 
 const URL = "wss://engram-fi-1.entrained.ai:2096";
 
@@ -11,23 +11,25 @@ async function main() {
     console.log(`📞 Remote shell request from ${call.from}`);
     call.answer();
 
-    const bash = spawn("bash", ["-i"], {
-      stdio: ["pipe", "pipe", "pipe"],
+    const bashProcess = spawnNodeProcess("bash", ["-i"], {
+      env: process.env,
     });
 
-    const stream = call.getStream();
-    bash.stdout.pipe(stream);
-    bash.stderr.pipe(stream);
-    stream.pipe(bash.stdin);
-
-    bash.on("exit", (code) => {
-      console.log(`🛑 Bash exited with code ${code ?? 0}`);
-      call.hangup();
-    });
+    call
+      .tunnel(bashProcess, {
+        onStderrChunk: (chunk) => {
+          console.error(`[bash stderr] ${Buffer.from(chunk).toString()}`);
+        },
+        forwardStderr: true,
+      })
+      .catch((error) => {
+        console.error("Tunnel error:", error);
+        call.hangup();
+      });
 
     call.on("hangup", () => {
       console.log("📴 Remote shell session ended");
-      bash.kill();
+      void bashProcess.stop?.("call_hangup");
     });
 
     console.log("🚀 Remote bash session started");
