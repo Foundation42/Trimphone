@@ -3,6 +3,7 @@
 > - ✅ `TrimphoneProcess` interface landed with Web Streams (`stdin`, `stdout`, `stderr`)
 > - ✅ `call.tunnel(process)` pipes processes directly over SystemX calls (with hangup cleanup)
 > - ✅ Node adapter (`spawnNodeProcess`) and `MemoryProcess` examples shipped
+> - ✅ Initial component catalog (`EchoProcess`, `UppercaseProcess`, `PrefixProcess`, `SuffixProcess`)
 > - 🚧 Browser/React Native adapters upcoming
 
 🌐 Cross-Platform Challenges

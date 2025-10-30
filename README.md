@@ -109,6 +109,23 @@ phone.on("ring", (call) => {
 
 Processes expose Web Streams (`stdin`, `stdout`, optional `stderr`), making the model portable across Node, browsers, and React Native once platform adapters are supplied.
 
+Reusable components built on this abstraction live under `trimphone/process`. For example:
+
+```ts
+import { UppercaseProcess, EchoProcess } from "trimphone";
+
+phone.on("ring", (call) => {
+  call.answer();
+  void call.tunnel(new UppercaseProcess());
+});
+
+// Dial side
+const call = await phone.dial("uppercase@trimphone.io");
+call.send("Trimphone rules!\n");
+```
+
+Current catalog: `EchoProcess`, `UppercaseProcess`, `PrefixProcess`, `SuffixProcess`, with more on the roadmap (HTTP proxy, AI agents, etc.).
+
 ## Development
 
 - Install dependencies with `bun install`
