@@ -216,8 +216,20 @@ export class Call extends EventEmitter {
     const processStderr = process.stderr;
     const forwardStderr = options.forwardStderr !== false;
 
-    const stdoutPipe = processReadable.pipeTo(callStream.writable, { preventClose: true });
-    const stdinPipe = callStream.readable.pipeTo(processWritable, { preventClose: true });
+    const callWriter = callStream.writable.getWriter();
+    const processWriter = processWritable.getWriter();
+
+    const stdoutPipe = processReadable.pipeTo(new WritableStream<Uint8Array>({
+      write: (chunk) => callWriter.write(chunk),
+      close: () => callWriter.releaseLock(),
+      abort: () => callWriter.releaseLock(),
+    }), { preventAbort: true, preventClose: true, preventCancel: true });
+
+    const stdinPipe = callStream.readable.pipeTo(new WritableStream<Uint8Array>({
+      write: (chunk) => processWriter.write(chunk),
+      close: () => processWriter.releaseLock(),
+      abort: () => processWriter.releaseLock(),
+    }), { preventAbort: true, preventClose: true, preventCancel: true });
 
     let stderrReader: ReadableStreamDefaultReader<Uint8Array> | null = null;
     let stderrLoop: Promise<void> | null = null;
@@ -230,7 +242,7 @@ export class Call extends EventEmitter {
             break;
           }
           if (forwardStderr) {
-            await callStream.writable.getWriter().write(value);
+            await callWriter.write(value);
           }
           if (options.onStderrChunk) {
             options.onStderrChunk(value);
@@ -253,10 +265,19 @@ export class Call extends EventEmitter {
         this.activeTunnels.delete(handle);
 
         await Promise.allSettled([stdinPipe, stdoutPipe]);
-        try {
-          await processWritable.getWriter().close();
-        } catch {
-          /* ignore */
+        if (!callWriter.releaseLock) {
+          try {
+            await callWriter.close?.();
+          } catch {
+            /* ignore */
+          }
+        }
+        if (!processWriter.releaseLock) {
+          try {
+            await processWriter.close?.();
+          } catch {
+            /* ignore */
+          }
         }
         if (stderrReader) {
           await stderrReader.cancel();
