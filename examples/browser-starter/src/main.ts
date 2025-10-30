@@ -67,7 +67,12 @@ async function bootstrap() {
     if (!text.trim()) {
       return;
     }
-    for (const call of calls.snapshot().filter((c) => c.status === "active")) {
+    const active = calls.snapshot().filter((c) => c.status === "active");
+    if (active.length === 0) {
+      log("No active calls to send to");
+      return;
+    }
+    for (const call of active) {
       const payload = text.endsWith("\n") ? text : `${text}\n`;
       const writer = activeCallWriters.get(call.id);
       writer?.write(payload);
