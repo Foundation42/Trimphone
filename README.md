@@ -188,6 +188,6 @@ This project uses a **dual licensing model**:
 - **MIT License** - Free for individuals, education, and community projects
 - **Commercial License** - For proprietary or revenue-generating use
 
-If your organization uses SystemX in a product, service, or platform, please reach out: **license@foundation42.org**
+If your organization uses SystemX or Trimphone in a product, service, or platform, please reach out: **license@foundation42.org**
 
 See [LICENSE](LICENSE) and [LICENSE-MIT](LICENSE-MIT) for details.
