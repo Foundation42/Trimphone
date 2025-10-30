@@ -606,7 +606,7 @@ export class Trimphone extends EventEmitter {
           sendMessage(callId, payload);
         },
         getWebStream: (callId: string) => {
-          return this.getOrCreateBrowserStream(callId);
+          return this.getOrCreateBrowserStream(callId).createView();
         },
       };
     }

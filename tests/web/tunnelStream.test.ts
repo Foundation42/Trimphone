@@ -11,7 +11,8 @@ describe("BrowserTunnelStream", () => {
       chunks.push(chunk);
     });
 
-    const writer = stream.writable.getWriter();
+    const view = stream.createView();
+    const writer = view.writable.getWriter();
     await writer.write(encoder.encode("hello"));
     await writer.close();
 
@@ -20,7 +21,8 @@ describe("BrowserTunnelStream", () => {
 
   it("emits data pushed from remote", async () => {
     const stream = new BrowserTunnelStream(() => {});
-    const reader = stream.readable.getReader();
+    const view = stream.createView();
+    const reader = view.readable.getReader();
 
     stream.pushChunk(encoder.encode("world"));
 
