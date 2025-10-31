@@ -540,6 +540,18 @@ export class Trimphone extends EventEmitter {
       }
       call.receiveMessage(this.useWebStreams ? bytes : toNodeBuffer(bytes));
       return;
+    } else if (message.content_type === "text" && typeof data === "string") {
+      // Convert text to bytes and push to stream
+      const encoder = new TextEncoder();
+      const bytes = encoder.encode(data);
+      const stream = this.streams.get(message.call_id);
+      if (stream instanceof BrowserTunnelStream) {
+        stream.pushChunk(bytes);
+      } else if (stream instanceof TunnelStream) {
+        stream.pushChunk(toNodeBuffer(bytes));
+      }
+      call.receiveMessage(this.useWebStreams ? bytes : toNodeBuffer(bytes));
+      return;
     }
 
     call.receiveMessage(data);
