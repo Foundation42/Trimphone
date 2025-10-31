@@ -5,7 +5,7 @@ const URL = "wss://engram-fi-1.entrained.ai:2096";
 
 async function main() {
   const phone = new Trimphone(URL);
-  await phone.register("bash@trimphone.io");
+  await phone.register("bash@home.local");
 
   phone.on("ring", (call) => {
     console.log(`📞 Remote shell request from ${call.from}`);
@@ -35,7 +35,7 @@ async function main() {
     console.log("🚀 Remote bash session started");
   });
 
-  console.log("✅ Bash service ready at bash@trimphone.io");
+  console.log("✅ Bash service ready at bash@home.local");
 }
 
 main().catch((error) => {

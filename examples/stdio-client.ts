@@ -4,10 +4,10 @@ const URL = "wss://engram-fi-1.entrained.ai:2096";
 
 async function main() {
   const phone = new Trimphone(URL);
-  await phone.register("chris@trimphone.io");
+  await phone.register("chris@home.local");
 
   console.log("📞 Connecting to remote bash...");
-  const call = await phone.dial("bash@trimphone.io");
+  const call = await phone.dial("bash@home.local");
   const stream = call.getStream();
 
   console.log("✅ Connected! Type commands (Ctrl+D to exit):");

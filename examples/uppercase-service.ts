@@ -5,7 +5,7 @@ const URL = process.env.SYSTEMX_URL ?? "wss://engram-fi-1.entrained.ai:2096";
 
 async function main() {
   const phone = new Trimphone(URL);
-  await phone.register("uppercase@trimphone.io");
+  await phone.register("uppercase@home.local");
 
   phone.on("ring", (call) => {
     console.log(`📞 Uppercase request from ${call.from}`);
@@ -18,7 +18,7 @@ async function main() {
     });
   });
 
-  console.log("✅ Uppercase service ready at uppercase@trimphone.io");
+  console.log("✅ Uppercase service ready at uppercase@home.local");
 }
 
 main().catch((error) => {

@@ -7,7 +7,7 @@ async function main() {
     transportFactory: () => new BrowserWebSocketTransport(),
   });
 
-  await phone.register(`web-client-${Math.random().toString(16).slice(2)}@trimphone.io`);
+  await phone.register(`web-client-${Math.random().toString(16).slice(2)}@home.local`);
 
   const status = document.querySelector("#status");
   if (status) {

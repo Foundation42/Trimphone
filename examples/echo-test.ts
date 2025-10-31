@@ -4,7 +4,7 @@ const URL = "wss://engram-fi-1.entrained.ai:2096";
 
 async function main() {
   const phone = new Trimphone(URL);
-  await phone.register("echo-test@trimphone.io");
+  await phone.register("echo-test@home.local");
 
   phone.on("ring", (call) => {
     console.log(`📞 Call from ${call.from}`);
