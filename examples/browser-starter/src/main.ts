@@ -4,7 +4,7 @@ import {
   browserProcesses,
 } from "trimphone";
 import { CallRegistry } from "./callList";
-import { log, setStatus, renderCalls } from "./ui";
+import { log, setStatus, renderCalls, initTerminal, getTerminal } from "./ui";
 
 const defaultUrl = "wss://engram-fi-1.entrained.ai:2096";
 const SYSTEMX_URL = (import.meta as any).env?.VITE_SYSTEMX_URL ?? defaultUrl;
@@ -15,6 +15,8 @@ const sendInput = sendForm?.querySelector<HTMLInputElement>("input[name=message]
 const localCallButton = document.querySelector<HTMLButtonElement>("#call-local");
 
 async function bootstrap() {
+  initTerminal();
+
   const phone = new Trimphone(SYSTEMX_URL, {
     transportFactory: () => new BrowserWebSocketTransport(),
   });
@@ -128,44 +130,65 @@ function setupCall(call: import("trimphone").Call, registry: CallRegistry) {
   const stream = call.getWebStream();
   const reader = stream.readable.getReader();
   const writer = stream.writable.getWriter();
-  const textDecoder = new TextDecoder();
+  const terminal = getTerminal();
   const textEncoder = new TextEncoder();
 
   let closed = false;
 
+  log(`\x1b[1;34m[Call ${call.id.slice(0, 6)}]\x1b[0m Connected`);
+
+  // Pipe stream data to terminal
   (async () => {
     while (!closed) {
       const { value, done } = await reader.read();
       if (done || !value) {
         break;
       }
-      log(`[${call.id.slice(0, 6)}] ${textDecoder.decode(value)}`);
+      // Write binary data directly to terminal (preserves ANSI codes)
+      if (terminal) {
+        terminal.write(value);
+      }
     }
-  })().catch((error) => log(`Stream error: ${(error as Error).message}`));
+  })().catch((error) => log(`\x1b[1;31mStream error:\x1b[0m ${(error as Error).message}`));
 
-  call.on("hangup", () => {
-    closed = true;
-    reader.cancel().catch(() => {});
-    writer.close().catch(() => {});
-    registry.update(call.id, { status: "ended" });
-    activeCallWriters.delete(call.id);
-    log(`Call ${call.id.slice(0, 6)} ended`);
-  });
+  // Handle terminal input
+  if (terminal) {
+    const onDataDisposable = terminal.onData((data) => {
+      if (closed) return;
+      writer.write(textEncoder.encode(data)).catch((error) => {
+        log(`\x1b[1;31mWrite failed:\x1b[0m ${(error as Error).message}`);
+      });
+    });
 
-  call.on("message", (msg) => {
-    if (typeof msg === "string") {
-      log(`[${call.id.slice(0, 6)}] ${msg}`);
-    }
-  });
+    // Clean up on hangup
+    call.on("hangup", () => {
+      closed = true;
+      onDataDisposable.dispose();
+      reader.cancel().catch(() => {});
+      writer.close().catch(() => {});
+      registry.update(call.id, { status: "ended" });
+      activeCallWriters.delete(call.id);
+      log(`\x1b[1;33m[Call ${call.id.slice(0, 6)}]\x1b[0m Ended`);
+    });
+  } else {
+    call.on("hangup", () => {
+      closed = true;
+      reader.cancel().catch(() => {});
+      writer.close().catch(() => {});
+      registry.update(call.id, { status: "ended" });
+      activeCallWriters.delete(call.id);
+      log(`Call ${call.id.slice(0, 6)} ended`);
+    });
+  }
 
   activeCallWriters.set(call.id, {
     write: (text: string) => {
       if (closed) {
-        log(`Call ${call.id.slice(0, 6)} already closed`);
+        log(`\x1b[1;31mCall ${call.id.slice(0, 6)} already closed\x1b[0m`);
         return;
       }
       writer.write(textEncoder.encode(text)).catch((error) => {
-        log(`Write failed: ${(error as Error).message}`);
+        log(`\x1b[1;31mWrite failed:\x1b[0m ${(error as Error).message}`);
       });
     },
   });

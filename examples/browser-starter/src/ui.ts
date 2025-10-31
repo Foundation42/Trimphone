@@ -1,13 +1,55 @@
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
 import type { CallState } from "./callList";
 
-const outputEl = document.querySelector<HTMLPreElement>("#output");
 const statusEl = document.querySelector<HTMLParagraphElement>("#status");
 const callsList = document.querySelector<HTMLUListElement>("#calls");
+const terminalEl = document.querySelector<HTMLDivElement>("#terminal");
+
+let terminal: Terminal | null = null;
+let fitAddon: FitAddon | null = null;
+
+export function initTerminal() {
+  if (!terminalEl || terminal) return terminal;
+
+  terminal = new Terminal({
+    cursorBlink: true,
+    fontSize: 14,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    convertEol: true,
+    theme: {
+      background: "#000000",
+      foreground: "#ffffff",
+    },
+  });
+
+  fitAddon = new FitAddon();
+  terminal.loadAddon(fitAddon);
+  terminal.open(terminalEl);
+  fitAddon.fit();
+
+  window.addEventListener("resize", () => {
+    fitAddon?.fit();
+  });
+
+  terminal.writeln("\x1b[1;32mTrimphone Terminal Ready\x1b[0m");
+  terminal.writeln("Connected to SystemX");
+  terminal.writeln("");
+
+  return terminal;
+}
+
+export function getTerminal(): Terminal | null {
+  return terminal;
+}
 
 export function log(message: string) {
-  if (!outputEl) return;
-  outputEl.textContent += `${message}\n`;
-  outputEl.scrollTop = outputEl.scrollHeight;
+  if (!terminal) {
+    console.log(message);
+    return;
+  }
+  terminal.writeln(message);
 }
 
 export function setStatus(status: string) {

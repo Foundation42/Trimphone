@@ -9,7 +9,9 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "trimphone": "file:../.."
+    "trimphone": "file:../..",
+    "@xterm/xterm": "^5.5.0",
+    "@xterm/addon-fit": "^0.10.0"
   },
   "devDependencies": {
     "typescript": "^5.3.3",
